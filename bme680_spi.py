@@ -1,31 +1,69 @@
-# SPDX-FileCopyrightText: 2021 Carter Nelson for Adafruit Industries
-# SPDX-License-Identifier: MIT
-
+import spidev
 import time
+import RPi.GPIO as GPIO
 
-import board
-import digitalio
+class BME688_SPI:
+    def __init__(self, spi_bus=0, spi_device=0, cs_pin=24):
+        self.spi = spidev.SpiDev()
+        self.cs_pin = cs_pin
+        self.spi_bus = spi_bus
+        self.spi_device = spi_device
+        
+        # Setup CS pin
+        GPIO.setmode(GPIO.BOARD)
+        GPIO.setup(self.cs_pin, GPIO.OUT)
+        GPIO.output(self.cs_pin, GPIO.HIGH)
+        
+        # SPI setup
+        self.spi.open(spi_bus, spi_device)
+        self.spi.max_speed_hz = 10000000  # 10MHz
+        self.spi.mode = 0b00  # SPI mode 0
+        
+    def read_register(self, register):
+        """Read from a BME688 register"""
+        GPIO.output(self.cs_pin, GPIO.LOW)
+        
+        # Send register address with read bit
+        tx_data = [register | 0x80, 0x00]
+        rx_data = self.spi.xfer2(tx_data)
+        
+        GPIO.output(self.cs_pin, GPIO.HIGH)
+        return rx_data[1]
+    
+    def write_register(self, register, value):
+        """Write to a BME688 register"""
+        GPIO.output(self.cs_pin, GPIO.LOW)
+        
+        # Send register address with write bit (cleared)
+        tx_data = [register & 0x7F, value]
+        self.spi.xfer2(tx_data)
+        
+        GPIO.output(self.cs_pin, GPIO.HIGH)
+    
+    def read_chip_id(self):
+        """Read BME688 chip ID (should be 0x61)"""
+        chip_id = self.read_register(0xD0)
+        return chip_id
+    
+    def cleanup(self):
+        self.spi.close()
+        GPIO.cleanup()
 
-import adafruit_bme680
-
-# Create sensor object, communicating over the board's default SPI bus
-cs = digitalio.DigitalInOut(board.D10)
-spi = board.SPI()
-bme680 = adafruit_bme680.Adafruit_BME680_SPI(spi, cs)
-
-# change this to match the location's pressure (hPa) at sea level
-bme680.sea_level_pressure = 1013.25
-
-# You will usually have to add an offset to account for the temperature of
-# the sensor. This is usually around 5 degrees but varies by use. Use a
-# separate temperature sensor to calibrate this one.
-temperature_offset = -5
-
-while True:
-    print("\nTemperature: %0.1f C" % (bme680.temperature + temperature_offset))
-    print("Gas: %d ohm" % bme680.gas)
-    print("Humidity: %0.1f %%" % bme680.relative_humidity)
-    print("Pressure: %0.3f hPa" % bme680.pressure)
-    print("Altitude = %0.2f meters" % bme680.altitude)
-
-    time.sleep(1)
+# Test the connection
+if __name__ == "__main__":
+    try:
+        # Try SPI bus 0 first (pins 19, 21, 23, 24)
+        sensor = BME688_SPI(spi_bus=0, spi_device=0, cs_pin=24)
+        
+        chip_id = sensor.read_chip_id()
+        print(f"BME688 Chip ID: 0x{chip_id:02X}")
+        
+        if chip_id == 0x61:
+            print("✅ BME688 detected successfully!")
+        else:
+            print("❌ BME688 not found or wrong chip ID")
+            
+        sensor.cleanup()
+        
+    except Exception as e:
+        print(f"Error: {e}")
